@@ -191,6 +191,16 @@
             display: block;
         }
         
+        .debug-info {
+            background-color: #eee;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 20px;
+            font-family: monospace;
+            font-size: 12px;
+            display: none;
+        }
+        
         @media (max-width: 768px) {
             .posts-grid {
                 grid-template-columns: 1fr;
@@ -214,6 +224,7 @@
                 <ul class="nav-links">
                     <li><a href="#" onclick="showPage('home')">الرئيسية</a></li>
                     <li><a href="#" onclick="showPage('publish')">نشر منشور</a></li>
+                    <li><a href="#" onclick="toggleDebug()">تصحيح الأخطاء</a></li>
                 </ul>
             </nav>
         </div>
@@ -248,6 +259,8 @@
                 </div>
                 <button type="submit">نشر</button>
             </form>
+            
+            <div id="debug-info" class="debug-info"></div>
         </section>
     </main>
 
@@ -263,6 +276,7 @@
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJyam9jcHpzeXhlZmNzenRhemtkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgyOTEzMTgsImV4cCI6MjA3Mzg2NzMxOH0.TvUthkBc_lnDdGlHJdEFUPo4Dl2n2oHyokXZE8_wodw';
         
         const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        let debugMode = false;
         
         // وظائف التنقل بين الصفحات
         function showPage(pageId) {
@@ -272,6 +286,27 @@
             
             document.getElementById(`${pageId}-page`).classList.add('active');
             return false;
+        }
+        
+        // تبديل وضع التصحيح
+        function toggleDebug() {
+            debugMode = !debugMode;
+            document.getElementById('debug-info').style.display = debugMode ? 'block' : 'none';
+            if (debugMode) {
+                loadDebugInfo();
+            }
+            return false;
+        }
+        
+        // تحميل معلومات التصحيح
+        function loadDebugInfo() {
+            const debugEl = document.getElementById('debug-info');
+            debugEl.innerHTML = `
+                <h3>معلومات التصحيح:</h3>
+                <p>Supabase URL: ${SUPABASE_URL}</p>
+                <p>Supabase Key: ${SUPABASE_KEY.substring(0, 20)}...</p>
+                <p>تم تحميل الصفحة: ${new Date().toLocaleString('ar-SA')}</p>
+            `;
         }
         
         // تحميل المنشورات عند فتح الصفحة
@@ -288,45 +323,55 @@
                 
                 let imageUrl = null;
                 
-                // إذا تم رفع صورة
-                if (imageFile) {
-                    // التحقق من حجم الصورة
-                    if (imageFile.size > 5 * 1024 * 1024) {
-                        showStatus('حجم الصورة كبير جداً. الحد الأقصى هو 5MB', 'error');
-                        return;
+                try {
+                    // إذا تم رفع صورة
+                    if (imageFile) {
+                        // التحقق من حجم الصورة
+                        if (imageFile.size > 5 * 1024 * 1024) {
+                            showStatus('حجم الصورة كبير جداً. الحد الأقصى هو 5MB', 'error');
+                            return;
+                        }
+                        
+                        showStatus('جاري رفع الصورة...', 'success');
+                        
+                        // رفع الصورة إلى Supabase Storage
+                        imageUrl = await uploadImage(imageFile);
+                        
+                        if (!imageUrl) {
+                            showStatus('فشل في رفع الصورة', 'error');
+                            return;
+                        }
                     }
                     
-                    showStatus('جاري رفع الصورة...', 'success');
-                    
-                    // رفع الصورة إلى Supabase Storage
-                    imageUrl = await uploadImage(imageFile);
-                    
-                    if (!imageUrl) {
-                        showStatus('فشل في رفع الصورة', 'error');
-                        return;
+                    if (title && description) {
+                        showStatus('جاري نشر المنشور...', 'success');
+                        
+                        const success = await addPost(title, description, imageUrl);
+                        
+                        if (success) {
+                            // إعادة تعيين النموذج
+                            document.getElementById('publish-form').reset();
+                            
+                            // إظهار رسالة نجاح
+                            showStatus('تم نشر المنشور بنجاح!', 'success');
+                            
+                            // الانتظار قليلاً ثم العودة إلى الصفحة الرئيسية
+                            setTimeout(() => {
+                                document.getElementById('upload-status').classList.remove('success');
+                                document.getElementById('upload-status').style.display = 'none';
+                                showPage('home');
+                            }, 1500);
+                        } else {
+                            showStatus('فشل في نشر المنشور', 'error');
+                        }
                     }
-                }
-                
-                if (title && description) {
-                    showStatus('جاري نشر المنشور...', 'success');
+                } catch (error) {
+                    console.error('Error:', error);
+                    showStatus(`فشل في نشر المنشور: ${error.message}`, 'error');
                     
-                    const success = await addPost(title, description, imageUrl);
-                    
-                    if (success) {
-                        // إعادة تعيين النموذج
-                        document.getElementById('publish-form').reset();
-                        
-                        // إظهار رسالة نجاح
-                        showStatus('تم نشر المنشور بنجاح!', 'success');
-                        
-                        // الانتظار قليلاً ثم العودة إلى الصفحة الرئيسية
-                        setTimeout(() => {
-                            document.getElementById('upload-status').classList.remove('success');
-                            document.getElementById('upload-status').style.display = 'none';
-                            showPage('home');
-                        }, 1500);
-                    } else {
-                        showStatus('فشل في نشر المنشور', 'error');
+                    if (debugMode) {
+                        const debugEl = document.getElementById('debug-info');
+                        debugEl.innerHTML += `<p>خطأ: ${error.message}</p>`;
                     }
                 }
             });
@@ -351,12 +396,20 @@
                 
                 if (error) {
                     console.error('Error loading posts:', error);
+                    if (debugMode) {
+                        const debugEl = document.getElementById('debug-info');
+                        debugEl.innerHTML += `<p>خطأ في تحميل المنشورات: ${error.message}</p>`;
+                    }
                     return;
                 }
                 
                 displayPosts(posts);
             } catch (error) {
                 console.error('Error:', error);
+                if (debugMode) {
+                    const debugEl = document.getElementById('debug-info');
+                    debugEl.innerHTML += `<p>خطأ في تحميل المنشورات: ${error.message}</p>`;
+                }
             }
         }
         
@@ -399,23 +452,31 @@
                 
                 // رفع الصورة إلى bucket المسمى "marketing"
                 const { data, error: uploadError } = await supabase.storage
-                    .from('marketing')  // تم التعديل هنا لاستخدام bucket باسم "marketing"
+                    .from('marketing')
                     .upload(filePath, file);
                 
                 if (uploadError) {
                     console.error('Error uploading image:', uploadError);
-                    return null;
+                    if (debugMode) {
+                        const debugEl = document.getElementById('debug-info');
+                        debugEl.innerHTML += `<p>خطأ في رفع الصورة: ${uploadError.message}</p>`;
+                    }
+                    throw new Error(uploadError.message);
                 }
                 
                 // الحصول على رابط الصورة
                 const { data: { publicUrl } } = supabase.storage
-                    .from('marketing')  // تم التعديل هنا لاستخدام bucket باسم "marketing"
+                    .from('marketing')
                     .getPublicUrl(filePath);
                 
                 return publicUrl;
             } catch (error) {
                 console.error('Error:', error);
-                return null;
+                if (debugMode) {
+                    const debugEl = document.getElementById('debug-info');
+                    debugEl.innerHTML += `<p>خطأ في رفع الصورة: ${error.message}</p>`;
+                }
+                throw error;
             }
         }
         
@@ -432,7 +493,11 @@
                 
                 if (error) {
                     console.error('Error adding post:', error);
-                    return false;
+                    if (debugMode) {
+                        const debugEl = document.getElementById('debug-info');
+                        debugEl.innerHTML += `<p>خطأ في إضافة المنشور: ${error.message}</p>`;
+                    }
+                    throw new Error(error.message);
                 }
                 
                 // إعادة تحميل المنشورات بعد الإضافة
@@ -440,9 +505,13 @@
                 return true;
             } catch (error) {
                 console.error('Error:', error);
-                return false;
+                if (debugMode) {
+                    const debugEl = document.getElementById('debug-info');
+                    debugEl.innerHTML += `<p>خطأ في إضافة المنشور: ${error.message}</p>`;
+                }
+                throw error;
             }
         }
     </script>
 </body>
-                                                                               </html>
+            </html>
