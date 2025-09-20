@@ -98,6 +98,14 @@
             transform: translateY(-5px);
         }
         
+        .post-image {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        
         .post-title {
             font-size: 1.2rem;
             margin-bottom: 10px;
@@ -106,6 +114,7 @@
         
         .post-description {
             color: #666;
+            margin-bottom: 10px;
         }
         
         .form-group {
@@ -154,6 +163,34 @@
             margin-top: 2rem;
         }
         
+        .no-image {
+            background-color: #f0f0f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #888;
+            font-style: italic;
+        }
+        
+        .upload-status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+        
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            display: block;
+        }
+        
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            display: block;
+        }
+        
         @media (max-width: 768px) {
             .posts-grid {
                 grid-template-columns: 1fr;
@@ -194,6 +231,7 @@
         <!-- صفحة النشر -->
         <section id="publish-page" class="page">
             <h1>نشر منشور جديد</h1>
+            <div id="upload-status" class="upload-status"></div>
             <form id="publish-form">
                 <div class="form-group">
                     <label for="title">العنوان:</label>
@@ -202,6 +240,11 @@
                 <div class="form-group">
                     <label for="description">الوصف:</label>
                     <textarea id="description" required></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="image">صورة (اختياري):</label>
+                    <input type="file" id="image" accept="image/*">
+                    <small>يمكنك رفع صورة لتعزيز منشورك (الحجم الأقصى: 5MB)</small>
                 </div>
                 <button type="submit">نشر</button>
             </form>
@@ -241,21 +284,62 @@
                 
                 const title = document.getElementById('title').value;
                 const description = document.getElementById('description').value;
+                const imageFile = document.getElementById('image').files[0];
+                
+                let imageUrl = null;
+                
+                // إذا تم رفع صورة
+                if (imageFile) {
+                    // التحقق من حجم الصورة
+                    if (imageFile.size > 5 * 1024 * 1024) {
+                        showStatus('حجم الصورة كبير جداً. الحد الأقصى هو 5MB', 'error');
+                        return;
+                    }
+                    
+                    showStatus('جاري رفع الصورة...', 'success');
+                    
+                    // رفع الصورة إلى Supabase Storage
+                    imageUrl = await uploadImage(imageFile);
+                    
+                    if (!imageUrl) {
+                        showStatus('فشل في رفع الصورة', 'error');
+                        return;
+                    }
+                }
                 
                 if (title && description) {
-                    await addPost(title, description);
+                    showStatus('جاري نشر المنشور...', 'success');
                     
-                    // إعادة تعيين النموذج
-                    document.getElementById('publish-form').reset();
+                    const success = await addPost(title, description, imageUrl);
                     
-                    // إظهار رسالة نجاح
-                    alert('تم نشر المنشور بنجاح!');
-                    
-                    // العودة إلى الصفحة الرئيسية
-                    showPage('home');
+                    if (success) {
+                        // إعادة تعيين النموذج
+                        document.getElementById('publish-form').reset();
+                        
+                        // إظهار رسالة نجاح
+                        showStatus('تم نشر المنشور بنجاح!', 'success');
+                        
+                        // الانتظار قليلاً ثم العودة إلى الصفحة الرئيسية
+                        setTimeout(() => {
+                            document.getElementById('upload-status').classList.remove('success');
+                            document.getElementById('upload-status').style.display = 'none';
+                            showPage('home');
+                        }, 1500);
+                    } else {
+                        showStatus('فشل في نشر المنشور', 'error');
+                    }
                 }
             });
         });
+        
+        // عرض حالة الرفع
+        function showStatus(message, type) {
+            const statusEl = document.getElementById('upload-status');
+            statusEl.textContent = message;
+            statusEl.className = 'upload-status';
+            statusEl.classList.add(type);
+            statusEl.style.display = 'block';
+        }
         
         // تحميل المنشورات من Supabase
         async function loadPosts() {
@@ -289,7 +373,14 @@
             posts.forEach(post => {
                 const postElement = document.createElement('div');
                 postElement.className = 'post-card';
+                
+                // إضافة صورة إذا كانت موجودة
+                const imageHtml = post.image_url 
+                    ? `<img src="${post.image_url}" alt="${post.title}" class="post-image">`
+                    : `<div class="post-image no-image">لا توجد صورة</div>`;
+                
                 postElement.innerHTML = `
+                    ${imageHtml}
                     <h3 class="post-title">${post.title}</h3>
                     <p class="post-description">${post.description}</p>
                     <small>${new Date(post.created_at).toLocaleString('ar-SA')}</small>
@@ -298,24 +389,60 @@
             });
         }
         
+        // رفع الصورة إلى Supabase Storage
+        async function uploadImage(file) {
+            try {
+                // إنشاء اسم فريد للصورة
+                const fileExt = file.name.split('.').pop();
+                const fileName = `${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
+                const filePath = `${fileName}`;
+                
+                // رفع الصورة إلى bucket المسمى "marketing"
+                const { data, error: uploadError } = await supabase.storage
+                    .from('marketing')  // تم التعديل هنا لاستخدام bucket باسم "marketing"
+                    .upload(filePath, file);
+                
+                if (uploadError) {
+                    console.error('Error uploading image:', uploadError);
+                    return null;
+                }
+                
+                // الحصول على رابط الصورة
+                const { data: { publicUrl } } = supabase.storage
+                    .from('marketing')  // تم التعديل هنا لاستخدام bucket باسم "marketing"
+                    .getPublicUrl(filePath);
+                
+                return publicUrl;
+            } catch (error) {
+                console.error('Error:', error);
+                return null;
+            }
+        }
+        
         // إضافة منشور جديد إلى Supabase
-        async function addPost(title, description) {
+        async function addPost(title, description, imageUrl) {
             try {
                 const { data, error } = await supabase
                     .from('marketing')
-                    .insert([{ title, description }]);
+                    .insert([{ 
+                        title, 
+                        description, 
+                        image_url: imageUrl 
+                    }]);
                 
                 if (error) {
                     console.error('Error adding post:', error);
-                    return;
+                    return false;
                 }
                 
                 // إعادة تحميل المنشورات بعد الإضافة
                 loadPosts();
+                return true;
             } catch (error) {
                 console.error('Error:', error);
+                return false;
             }
         }
     </script>
 </body>
-</html>
+                                                                               </html>
